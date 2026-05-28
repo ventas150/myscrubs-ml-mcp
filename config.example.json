@@ -1,0 +1,62 @@
+{
+  "ml": {
+    "site_id": "MLC",
+    "app_id": "REEMPLAZAR_APP_ID",
+    "secret_key": "REEMPLAZAR_SECRET_KEY",
+    "redirect_uri": "http://localhost:8765/callback",
+    "user_id_seller": 0,
+    "main_categories": ["MLC1430"],
+    "main_search_terms": [
+      "uniforme clinico",
+      "uniforme medico",
+      "scrub mujer",
+      "scrub hombre",
+      "pijama clinico",
+      "ambo clinico"
+    ]
+  },
+  "bsale": {
+    "use_existing_mcp": true,
+    "sku_mapping_cache_hours": 24,
+    "comment": "Toma costos desde el MCP de BSale ya instalado en Cowork."
+  },
+  "profit": {
+    "iva_pct": 19,
+    "ml_commission_pct_by_listing_type": {
+      "gold_pro": 17.5,
+      "gold_premium": 13,
+      "gold_special": 13,
+      "free": 0
+    },
+    "cuotas_sin_interes_cost_pct": {
+      "3": 6,
+      "6": 12,
+      "12": 18
+    },
+    "envio_subsidio_estimado_clp": 1500,
+    "target_min_margin_pct": 20,
+    "target_ideal_margin_pct": 30
+  },
+  "agent": {
+    "enabled": true,
+    "cron": "0 6 * * *",
+    "timezone": "America/Santiago",
+    "guardrails": {
+      "max_price_change_pct": 10,
+      "max_changes_per_day": 20,
+      "min_hours_between_changes_same_sku": 24,
+      "min_margin_pct_before_pause": 0,
+      "pause_threshold_days": 7,
+      "auto_respond_questions": true
+    },
+    "report_destinations": {
+      "email": "ventas@myscrubs.cl",
+      "notion_database_id": ""
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "audit_log_path": "~/.myscrubs_ml/audit.log",
+    "rotate_days": 30
+  }
+}
