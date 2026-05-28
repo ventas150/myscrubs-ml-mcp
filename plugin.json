@@ -1,0 +1,74 @@
+{
+  "name": "myscrubs-mercadolibre",
+  "version": "1.0.0",
+  "description": "MCP completo para MercadoLibre Chile con agente autónomo que optimiza margen neto (no solo ventas). Integra con BSale para costos reales y toma decisiones de pricing, Q&A y publicaciones basadas en ganancia por SKU.",
+  "author": "MyScrubs",
+  "homepage": "https://myscrubs.cl",
+  "license": "Proprietary",
+  "mcps": [
+    {
+      "name": "myscrubs_ml",
+      "command": "python",
+      "args": ["server.py"],
+      "env": {
+        "MYSCRUBS_ML_CONFIG": "./config.json"
+      },
+      "description": "MCP MercadoLibre con Profit Engine y agente diario"
+    }
+  ],
+  "skills": [
+    {
+      "name": "myscrubs-ml-pricing-review",
+      "trigger_phrases": [
+        "revisa mis precios en mercadolibre",
+        "qué SKUs están perdiendo plata",
+        "cuál es mi margen real en ML",
+        "competencia mercadolibre",
+        "agente diario ML"
+      ],
+      "description": "Análisis de pricing/margen por SKU en MercadoLibre"
+    },
+    {
+      "name": "myscrubs-ml-publish",
+      "trigger_phrases": [
+        "publicar producto en mercadolibre",
+        "crear publicación ML",
+        "subir nuevo scrub a ML"
+      ],
+      "description": "Asistente para crear/editar publicaciones MyScrubs en ML"
+    },
+    {
+      "name": "myscrubs-ml-customer-service",
+      "trigger_phrases": [
+        "responde preguntas mercadolibre",
+        "atención clientes ML",
+        "reclamos abiertos"
+      ],
+      "description": "Atención a preguntas, mensajes y reclamos en ML"
+    }
+  ],
+  "scheduled_tasks_recommended": [
+    {
+      "name": "Agente diario MyScrubs ML",
+      "cron": "0 6 * * *",
+      "timezone": "America/Santiago",
+      "prompt": "Corre la tool ml_agente_corrida_diaria con modo='apply_safe'. Después comparte conmigo el reporte: KPIs principales, top 5 acciones ejecutadas y top 3 pendientes que requieren mi aprobación.",
+      "description": "Análisis + ejecución diaria de optimización de catálogo"
+    },
+    {
+      "name": "Sweep de preguntas cada 2h",
+      "cron": "0 */2 8-22 * * *",
+      "timezone": "America/Santiago",
+      "prompt": "Llamá ml_preguntas_pendientes y respondé las que correspondan con templates. Las que no estén en templates, márcalas como pendientes y dame el listado para revisar.",
+      "description": "Atención rápida a preguntas durante horario comercial"
+    }
+  ],
+  "permissions": {
+    "network": ["api.mercadolibre.com", "auth.mercadolibre.cl"],
+    "filesystem": ["~/.myscrubs_ml/**"]
+  },
+  "dependencies": {
+    "python": ">=3.11",
+    "packages_file": "requirements.txt"
+  }
+}
