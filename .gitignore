@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+.venv
+venv/
+tokens.json
+config.json
+.myscrubs_ml/
+reports/
+audit.log
+.DS_Store
+.idea/
+.vscode/
+*.log
