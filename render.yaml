@@ -1,0 +1,157 @@
+# render.yaml — Blueprint para deployment 1-click de MyScrubs ML en Render
+#
+# Servicios:
+#   1) myscrubs-ml-mcp        Web service (HTTP MCP siempre disponible)
+#   2) myscrubs-agent-daily   Cron job: 06:00 hora Chile (10:00 UTC)
+#   3) myscrubs-agent-questions  Cron job: cada 2h horario hábil Chile
+#
+# Disco persistente compartido por el web service (1GB) — tokens + cache + audit.
+# Los cron jobs NO necesitan disco propio: golpean el MCP web via HTTP.
+#
+# Para deployear: crear repo Git con estos archivos, en Render → New → Blueprint
+# y apuntar al repo. Render lee este archivo y crea todo.
+
+services:
+  # =====================================================================
+  # 1. MCP HTTP Server (always-on)
+  # =====================================================================
+  - type: web
+    name: myscrubs-ml-mcp
+    runtime: docker
+    plan: starter
+    region: oregon  # cambia a el más cercano si querés
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python serve_http.py
+    healthCheckPath: /health
+    disk:
+      name: myscrubs-data
+      mountPath: /var/data/myscrubs
+      sizeGB: 1
+    envVars:
+      # --- secretos (configurar en dashboard Render) ---
+      - key: ML_APP_ID
+        sync: false
+      - key: ML_SECRET_KEY
+        sync: false
+      - key: ML_REDIRECT_URI
+        sync: false
+      - key: ML_USER_ID_SELLER
+        sync: false
+      - key: BSALE_ACCESS_TOKEN
+        sync: false
+      - key: MCP_AUTH_TOKEN
+        generateValue: true  # Render genera secret aleatorio
+      # --- configuración ML ---
+      - key: ML_SITE_ID
+        value: MLC
+      - key: ML_MAIN_CATEGORIES
+        value: MLC1430
+      - key: ML_MAIN_SEARCH_TERMS
+        value: "uniforme clinico,uniforme medico,scrub mujer,scrub hombre,pijama clinico,ambo clinico"
+      # --- profit engine ---
+      - key: PROFIT_IVA_PCT
+        value: "19"
+      - key: PROFIT_MIN_MARGIN_PCT
+        value: "20"
+      - key: PROFIT_IDEAL_MARGIN_PCT
+        value: "30"
+      - key: PROFIT_ENVIO_SUBSIDIO_CLP
+        value: "1500"
+      # --- guardrails agente ---
+      - key: AGENT_MAX_CHANGE_PCT
+        value: "10"
+      - key: AGENT_MAX_CHANGES_DAY
+        value: "20"
+      - key: AGENT_PAUSE_DAYS
+        value: "7"
+      - key: AGENT_AUTO_QUESTIONS
+        value: "true"
+      # --- transporte / paths ---
+      - key: MCP_TRANSPORT
+        value: streamable-http
+      - key: MYSCRUBS_DATA_DIR
+        value: /var/data/myscrubs
+      - key: ML_TOKENS_PATH
+        value: /var/data/myscrubs/tokens.json
+      - key: MCP_ALLOWED_ORIGINS
+        value: "*"
+      # logging
+      - key: LOG_LEVEL
+        value: INFO
+
+  # =====================================================================
+  # 2. Agente Claude — corrida diaria completa
+  # =====================================================================
+  - type: cron
+    name: myscrubs-agent-daily
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python claude_agent.py
+    # 10:00 UTC = 06:00 hora Chile (horario estándar UTC-4)
+    schedule: "0 10 * * *"
+    envVars:
+      - key: AGENT_MODE
+        value: daily_full
+      - key: AGENT_MODEL
+        value: claude-sonnet-4-6
+      - key: AGENT_MAX_TURNS
+        value: "40"
+      # --- conexión al MCP ---
+      # Después del primer deploy, copia el URL público del web service
+      # (algo como https://myscrubs-ml-mcp.onrender.com) y completá:
+      - key: MCP_URL
+        value: https://CHANGEME-myscrubs-ml-mcp.onrender.com/mcp
+      - key: MCP_AUTH_TOKEN
+        fromService:
+          type: web
+          name: myscrubs-ml-mcp
+          envVarKey: MCP_AUTH_TOKEN
+      # --- Anthropic ---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # --- reporte ---
+      - key: REPORT_EMAIL_TO
+        value: ventas@myscrubs.cl
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        value: noreply@myscrubs.cl
+      - key: REPORT_WEBHOOK
+        sync: false
+
+  # =====================================================================
+  # 3. Agente Claude — sweep de preguntas cada 2h horario hábil
+  # =====================================================================
+  - type: cron
+    name: myscrubs-agent-questions
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python claude_agent.py
+    # Cada 2h entre 12:00 y 00:00 UTC (08:00–20:00 hora Chile, horario hábil)
+    schedule: "0 12,14,16,18,20,22,0 * * *"
+    envVars:
+      - key: AGENT_MODE
+        value: questions_sweep
+      - key: AGENT_MODEL
+        value: claude-haiku-4-5-20251001
+      - key: AGENT_MAX_TURNS
+        value: "15"
+      - key: MCP_URL
+        value: https://CHANGEME-myscrubs-ml-mcp.onrender.com/mcp
+      - key: MCP_AUTH_TOKEN
+        fromService:
+          type: web
+          name: myscrubs-ml-mcp
+          envVarKey: MCP_AUTH_TOKEN
+      - key: ANTHROPIC_API_KEY
+        sync: false
