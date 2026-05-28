@@ -1,12 +1,12 @@
 """
-claude_agent.py — Agente Claude que vive en el MCP de MyScrubs ML.
+claude_agent.py â Agente Claude que vive en el MCP de MyScrubs ML.
 
 Este script es lo que corre en el cron de Render. Usa la API de Anthropic
-para razonar sobre el catálogo y la competencia, e invoca las tools del
+para razonar sobre el catÃ¡logo y la competencia, e invoca las tools del
 MCP HTTP via tool_use loop.
 
 Dos modos (env var AGENT_MODE):
-  - "daily_full": pipeline completa de optimización (1× al día)
+  - "daily_full": pipeline completa de optimizaciÃ³n (1Ã al dÃ­a)
   - "questions_sweep": revisa preguntas pendientes cada 2h y las responde
 
 Env vars requeridas:
@@ -52,7 +52,7 @@ log = structlog.get_logger("claude_agent")
 class MCPHttpClient:
     """Cliente JSON-RPC para un servidor MCP via Streamable HTTP.
 
-    Implementa lo mínimo: initialize, tools/list, tools/call. No usa SSE
+    Implementa lo mÃ­nimo: initialize, tools/list, tools/call. No usa SSE
     streaming porque para tool calls discretas no es necesario.
     """
 
@@ -60,6 +60,7 @@ class MCPHttpClient:
         self.url = url.rstrip("/")
         self._http = httpx.AsyncClient(
             timeout=timeout,
+            follow_redirects=True,
             headers={
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
@@ -145,7 +146,7 @@ def _parse_first_sse_event(text: str) -> dict:
 
 
 # =========================================================================
-# Conversión tools MCP → schema Anthropic
+# ConversiÃ³n tools MCP â schema Anthropic
 # =========================================================================
 
 def mcp_tools_to_anthropic(tools: list[dict]) -> list[dict]:
@@ -164,35 +165,35 @@ def mcp_tools_to_anthropic(tools: list[dict]) -> list[dict]:
 # Prompts del agente
 # =========================================================================
 
-SYSTEM_PROMPT_DAILY = """Eres el agente autónomo de MyScrubs, una marca chilena de uniformes clínicos que vende en MercadoLibre Chile. Tu misión es MAXIMIZAR EL MARGEN NETO mensual del catálogo, no las ventas brutas.
+SYSTEM_PROMPT_DAILY = """Eres el agente autÃ³nomo de MyScrubs, una marca chilena de uniformes clÃ­nicos que vende en MercadoLibre Chile. Tu misiÃ³n es MAXIMIZAR EL MARGEN NETO mensual del catÃ¡logo, no las ventas brutas.
 
 Tienes acceso a tools del MCP que te permiten:
 - Leer mercado/competencia (ml_buscar_categoria, ml_competencia_top_n, ml_market_share, ml_estadisticas_categoria)
-- Ver tu catálogo y métricas (ml_mis_publicaciones, ml_metricas_visitas, ml_health_publicacion)
+- Ver tu catÃ¡logo y mÃ©tricas (ml_mis_publicaciones, ml_metricas_visitas, ml_health_publicacion)
 - Calcular margen REAL por SKU (ml_margen_sku, ml_precio_minimo_objetivo, ml_decision_precio)
 - Modificar publicaciones (ml_actualizar_precio, ml_actualizar_stock, ml_actualizar_titulo, ml_pausar_publicacion)
 - Atender clientes (ml_preguntas_pendientes, ml_responder_pregunta)
-- Ver órdenes/reclamos (ml_ordenes_recientes, ml_reclamos_abiertos)
+- Ver Ã³rdenes/reclamos (ml_ordenes_recientes, ml_reclamos_abiertos)
 
 Pipeline que debes ejecutar HOY:
 
-1. Snapshot competitivo: para cada término de búsqueda principal ("uniforme clinico", "scrub mujer", "scrub hombre", "ambo clinico"), obtén top 20 competidores. Anota mediana de precio y rango.
+1. Snapshot competitivo: para cada tÃ©rmino de bÃºsqueda principal ("uniforme clinico", "scrub mujer", "scrub hombre", "ambo clinico"), obtÃ©n top 20 competidores. Anota mediana de precio y rango.
 
-2. Snapshot propio: lista todas mis publicaciones activas. Para cada una calcula su margen real (ml_margen_sku) y su posición estimada vs competencia.
+2. Snapshot propio: lista todas mis publicaciones activas. Para cada una calcula su margen real (ml_margen_sku) y su posiciÃ³n estimada vs competencia.
 
 3. Decisiones de pricing (UNA por SKU):
    - Margen NEGATIVO: marca para pausa (ml_pausar_publicacion con dry_run=True; NO pauses solo, RECOMIENDA)
-   - Margen < 20%: usa ml_precio_minimo_objetivo para calcular precio que asegure 25% margen. Si el cambio es ≤10%, aplica con ml_actualizar_precio dry_run=False. Si es >10%, déjalo como pendiente de aprobación humana.
-   - Margen ≥ 30% y posición top 3: prueba subir 2-3% (dentro de guardrail ±10%)
-   - Margen ≥ 25% pero posición >10: baja 3-5% para ganar visibilidad sin sacrificar mínimo
+   - Margen < 20%: usa ml_precio_minimo_objetivo para calcular precio que asegure 25% margen. Si el cambio es â¤10%, aplica con ml_actualizar_precio dry_run=False. Si es >10%, dÃ©jalo como pendiente de aprobaciÃ³n humana.
+   - Margen â¥ 30% y posiciÃ³n top 3: prueba subir 2-3% (dentro de guardrail Â±10%)
+   - Margen â¥ 25% pero posiciÃ³n >10: baja 3-5% para ganar visibilidad sin sacrificar mÃ­nimo
    - Caso intermedio: mantener
 
 4. Responde preguntas pendientes: usa ml_preguntas_pendientes. Para cada pregunta:
-   - Stock/disponibilidad → responde confirmando si hay stock
-   - Tallas → indica que están en variantes
-   - Envío/despacho → "1 día hábil despacho, 1-5 días entrega según comuna"
-   - Factura → confirma que emiten factura electrónica
-   - Cualquier otra cosa compleja → NO respondas, déjala para humano
+   - Stock/disponibilidad â responde confirmando si hay stock
+   - Tallas â indica que estÃ¡n en variantes
+   - EnvÃ­o/despacho â "1 dÃ­a hÃ¡bil despacho, 1-5 dÃ­as entrega segÃºn comuna"
+   - Factura â confirma que emiten factura electrÃ³nica
+   - Cualquier otra cosa compleja â NO respondas, dÃ©jala para humano
 
 5. Reporta al final un JSON con:
    {
@@ -206,23 +207,23 @@ Pipeline que debes ejecutar HOY:
    }
 
 GUARDRAILS ABSOLUTOS:
-- Máximo 20 cambios de precio por corrida
+- MÃ¡ximo 20 cambios de precio por corrida
 - Nunca cambies precio si el delta es >10% sin marcarlo como pendiente
-- Nunca pauses una publicación automáticamente (siempre recomienda)
-- Si una tool da error 3 veces seguidas, omítela y continúa
+- Nunca pauses una publicaciÃ³n automÃ¡ticamente (siempre recomienda)
+- Si una tool da error 3 veces seguidas, omÃ­tela y continÃºa
 
-Sé eficiente: usa las tools en paralelo cuando puedas, no hagas lecturas redundantes."""
+SÃ© eficiente: usa las tools en paralelo cuando puedas, no hagas lecturas redundantes."""
 
-SYSTEM_PROMPT_QUESTIONS = """Eres el agente de atención al cliente de MyScrubs en MercadoLibre Chile. Tu única tarea ahora es revisar preguntas pendientes y responderlas con tono cálido, profesional y conciso.
+SYSTEM_PROMPT_QUESTIONS = """Eres el agente de atenciÃ³n al cliente de MyScrubs en MercadoLibre Chile. Tu Ãºnica tarea ahora es revisar preguntas pendientes y responderlas con tono cÃ¡lido, profesional y conciso.
 
 Tools disponibles: ml_preguntas_pendientes, ml_mis_publicaciones (para contexto del item), ml_responder_pregunta.
 
 Para CADA pregunta pendiente:
 1. Lee el texto.
-2. Si encaja con un patrón conocido (stock, tallas, envío, factura, talla específica), responde con el template apropiado adaptado al item.
-3. Si es compleja, ambigua, queja, o requiere decisión de negocio (descuento, devolución, cambio), NO RESPONDAS — déjala para humano y márcala en el reporte.
+2. Si encaja con un patrÃ³n conocido (stock, tallas, envÃ­o, factura, talla especÃ­fica), responde con el template apropiado adaptado al item.
+3. Si es compleja, ambigua, queja, o requiere decisiÃ³n de negocio (descuento, devoluciÃ³n, cambio), NO RESPONDAS â dÃ©jala para humano y mÃ¡rcala en el reporte.
 
-Tono: "¡Hola! ... ¡Saludos!". Tutea, sé breve (máx 3 oraciones).
+Tono: "Â¡Hola! ... Â¡Saludos!". Tutea, sÃ© breve (mÃ¡x 3 oraciones).
 
 Al final reporta JSON: {"respondidas": N, "pendientes_humano": [...], "errores": [...]}."""
 
@@ -254,9 +255,9 @@ async def run_agent(mode: str) -> dict:
         SYSTEM_PROMPT_DAILY if mode == "daily_full" else SYSTEM_PROMPT_QUESTIONS
     )
     user_msg = (
-        "Ejecuta tu pipeline diaria de optimización completa para HOY."
+        "Ejecuta tu pipeline diaria de optimizaciÃ³n completa para HOY."
         if mode == "daily_full"
-        else "Revisa preguntas pendientes y respondé las que correspondan."
+        else "Revisa preguntas pendientes y respondÃ© las que correspondan."
     )
 
     client = AsyncAnthropic(api_key=api_key)
@@ -343,7 +344,7 @@ async def run_agent(mode: str) -> dict:
 
     await mcp.close()
 
-    # Intentar parsear JSON del último texto
+    # Intentar parsear JSON del Ãºltimo texto
     report_json: Optional[dict] = None
     try:
         # Buscar bloque JSON en el texto final
@@ -375,7 +376,7 @@ async def run_agent(mode: str) -> dict:
 
 
 # =========================================================================
-# Notificación de resultado
+# NotificaciÃ³n de resultado
 # =========================================================================
 
 async def notify(summary: dict) -> None:
@@ -393,7 +394,7 @@ async def notify(summary: dict) -> None:
     if email_to and smtp_host:
         try:
             body = (
-                f"MyScrubs ML — corrida {summary['mode']}\n"
+                f"MyScrubs ML â corrida {summary['mode']}\n"
                 f"Turnos: {summary['turns']}\n"
                 f"Tool calls: {summary['tool_calls']}\n\n"
                 f"{summary['final_text']}\n"
@@ -401,7 +402,7 @@ async def notify(summary: dict) -> None:
             msg = MIMEText(body, _charset="utf-8")
             msg["Subject"] = (
                 f"[MyScrubs ML] Reporte {summary['mode']} "
-                f"— {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+                f"â {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
             )
             msg["From"] = os.environ.get("SMTP_FROM", "noreply@myscrubs.cl")
             msg["To"] = email_to
@@ -424,7 +425,7 @@ async def notify(summary: dict) -> None:
 async def main():
     mode = os.environ.get("AGENT_MODE", "daily_full")
     if mode not in ("daily_full", "questions_sweep"):
-        print(f"ERROR: AGENT_MODE inválido: {mode}")
+        print(f"ERROR: AGENT_MODE invÃ¡lido: {mode}")
         sys.exit(1)
     summary = await run_agent(mode)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
