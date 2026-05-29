@@ -61,6 +61,7 @@ class MCPHttpClient:
         self.url = url.rstrip("/")
         self._http = httpx.AsyncClient(
             timeout=timeout,
+            follow_redirects=True,  # FIX: Mount("/mcp") emits 307 to add trailing slash
             headers={
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
