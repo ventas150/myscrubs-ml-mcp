@@ -457,6 +457,46 @@ async def ml_acciones_hoy() -> dict:
     return TW.resumen_acciones_hoy()
 
 
+@mcp.tool()
+async def ml_acciones_periodo(
+    days_back: int = 7,
+    only_applied: bool = True,
+    accion: str | None = None,
+    item_id: str | None = None,
+    limit: int = 200,
+) -> dict:
+    """
+    Lee el audit log y devuelve TODAS las acciones del MCP en un período.
+    Útil para Cowork: "qué hizo el agente en los últimos 7 días?".
+
+    Args:
+      days_back: cuántos días atrás mirar (default 7).
+      only_applied: True = solo cambios efectivos (default). False = incluye
+                    propuestas / dry_run / bloqueadas por guardrail.
+      accion: filtro exacto por tipo (ej. "actualizar_precio",
+              "actualizar_stock", "responder_pregunta", "pausar").
+      item_id: filtro por SKU específico (ej. "MLC958953783").
+      limit: máximo de entradas a devolver (default 200).
+    """
+    return TW.acciones_periodo(
+        days_back=days_back,
+        only_applied=only_applied,
+        accion_filter=accion,
+        item_id_filter=item_id,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+async def ml_cambios_precio_periodo(days_back: int = 7) -> dict:
+    """
+    Lista compacta de cambios de precio aplicados en los últimos N días.
+    Devuelve: SKU, precio antes, precio después, delta %, motivo.
+    Perfecto para preguntarle "qué precios cambió el agente esta semana?".
+    """
+    return TW.cambios_precio_periodo(days_back=days_back)
+
+
 # =========================================================================
 # Run
 # =========================================================================

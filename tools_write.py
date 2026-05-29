@@ -12,8 +12,9 @@ REGLAS DE ORO:
 from __future__ import annotations
 
 import json
+import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,7 +24,25 @@ from ml_client import MLClient
 
 log = structlog.get_logger()
 
-AUDIT_LOG = Path.home() / ".myscrubs_ml" / "audit.log"
+
+def _resolve_audit_log_path() -> Path:
+    """Resuelve la ruta del audit.log preferiendo disco persistente.
+
+    Orden de prioridad:
+    1. env MYSCRUBS_AUDIT_LOG (override explícito)
+    2. env MYSCRUBS_DATA_DIR / audit.log (disco persistente en Render)
+    3. ~/.myscrubs_ml/audit.log (default local)
+    """
+    explicit = os.environ.get("MYSCRUBS_AUDIT_LOG")
+    if explicit:
+        return Path(explicit)
+    data_dir = os.environ.get("MYSCRUBS_DATA_DIR")
+    if data_dir:
+        return Path(data_dir) / "audit.log"
+    return Path.home() / ".myscrubs_ml" / "audit.log"
+
+
+AUDIT_LOG = _resolve_audit_log_path()
 AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -407,8 +426,9 @@ async def aplicar_promocion_seller(
 # =========================================================================
 
 def resumen_acciones_hoy() -> dict:
+    """Cuenta de acciones aplicadas hoy (UTC) agrupadas por tipo."""
     if not AUDIT_LOG.exists():
-        return {"total": 0, "por_accion": {}}
+        return {"total": 0, "por_accion": {}, "audit_path": str(AUDIT_LOG)}
     today = datetime.utcnow().strftime("%Y-%m-%d")
     counts: dict[str, int] = {}
     total = 0
@@ -421,4 +441,126 @@ def resumen_acciones_hoy() -> dict:
             if entry.get("ts", "").startswith(today) and entry.get("applied"):
                 counts[entry["action"]] = counts.get(entry["action"], 0) + 1
                 total += 1
-    return {"date": today, "total": total, "por_accion": counts}
+    return {"date": today, "total": total, "por_accion": counts, "audit_path": str(AUDIT_LOG)}
+
+
+def acciones_periodo(
+    days_back: int = 7,
+    only_applied: bool = True,
+    accion_filter: Optional[str] = None,
+    item_id_filter: Optional[str] = None,
+    limit: int = 200,
+) -> dict:
+    """
+    Lee el audit log y devuelve las acciones dentro de un rango temporal.
+
+    Args:
+      days_back: cuántos días atrás mirar (default 7).
+      only_applied: si True, sólo cuenta las que efectivamente se aplicaron.
+                   Si False, también incluye las que quedaron en dry_run o
+                   bloqueadas por guardrail.
+      accion_filter: si se pasa, filtra por tipo exacto de acción
+                     (ej. "actualizar_precio", "actualizar_stock").
+      item_id_filter: si se pasa, filtra por SKU específico.
+      limit: máximo de entradas a devolver (orden cronológico reverso).
+
+    Devuelve:
+      {
+        "audit_path": "...",
+        "rango": {"desde": "...", "hasta": "..."},
+        "total_encontrados": N,
+        "acciones": [
+          {"ts":"...", "action":"actualizar_precio", "item_id":"MLC...",
+           "applied":true, "diff":{precio_antes:..., precio_despues:...}}
+        ],
+        "por_accion": {"actualizar_precio": N, ...},
+        "por_item": {"MLC123": M, ...}
+      }
+    """
+    if not AUDIT_LOG.exists():
+        return {
+            "audit_path": str(AUDIT_LOG),
+            "total_encontrados": 0,
+            "acciones": [],
+            "por_accion": {},
+            "por_item": {},
+            "warning": "Audit log no existe todavía. Acciones se loggean al primer cambio.",
+        }
+
+    cutoff = datetime.utcnow() - timedelta(days=max(1, int(days_back)))
+    cutoff_iso = cutoff.isoformat()
+    hasta_iso = datetime.utcnow().isoformat()
+    matches: list[dict] = []
+    por_accion: dict[str, int] = {}
+    por_item: dict[str, int] = {}
+
+    with AUDIT_LOG.open(encoding="utf-8") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            ts = entry.get("ts", "")
+            if ts < cutoff_iso:
+                continue
+            if only_applied and not entry.get("applied"):
+                continue
+            action = entry.get("action") or ""
+            item_id = entry.get("item_id") or ""
+            if accion_filter and action != accion_filter:
+                continue
+            if item_id_filter and item_id != item_id_filter:
+                continue
+            matches.append(entry)
+            por_accion[action] = por_accion.get(action, 0) + 1
+            if item_id:
+                por_item[item_id] = por_item.get(item_id, 0) + 1
+
+    # Orden cronológico reverso (más reciente primero)
+    matches.sort(key=lambda e: e.get("ts", ""), reverse=True)
+
+    return {
+        "audit_path": str(AUDIT_LOG),
+        "rango": {"desde": cutoff_iso, "hasta": hasta_iso, "days_back": days_back},
+        "filtros": {
+            "only_applied": only_applied,
+            "accion": accion_filter,
+            "item_id": item_id_filter,
+        },
+        "total_encontrados": len(matches),
+        "acciones": matches[: max(1, int(limit))],
+        "por_accion": por_accion,
+        "por_item": por_item,
+    }
+
+
+def cambios_precio_periodo(days_back: int = 7) -> dict:
+    """
+    Atajo: devuelve solo cambios de precio aplicados en los últimos N días
+    con un formato compacto (SKU, antes, después, delta_pct, motivo).
+    """
+    raw = acciones_periodo(
+        days_back=days_back,
+        only_applied=True,
+        accion_filter="actualizar_precio",
+        limit=500,
+    )
+    compactos = []
+    for entry in raw.get("acciones", []):
+        payload = entry.get("payload") or {}
+        diff = payload if "precio_antes" in payload else payload.get("diff") or payload
+        compactos.append({
+            "ts": entry.get("ts"),
+            "sku": entry.get("item_id"),
+            "precio_antes": diff.get("precio_antes"),
+            "precio_despues": diff.get("precio_despues"),
+            "delta_pct": diff.get("delta_pct"),
+            "delta_clp": diff.get("delta_clp"),
+            "motivo": diff.get("motivo"),
+        })
+    return {
+        "audit_path": raw.get("audit_path"),
+        "rango": raw.get("rango"),
+        "total_cambios": len(compactos),
+        "cambios": compactos,
+    }
