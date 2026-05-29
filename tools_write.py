@@ -92,26 +92,45 @@ async def actualizar_precio(
     motivo: str,
     max_change_pct: float = 10.0,
     dry_run: bool = True,
+    variation_prices: Optional[dict[int, float]] = None,
 ) -> dict:
     """
     Cambia el precio de una publicación con guardrail de % máximo.
 
     motivo: razón legible (ej. "agente diario: posición #15, margen 23%, bajar 5%")
     max_change_pct: si el cambio excede este %, requiere confirmación explícita
-                    via dry_run=False AND force=True (no implementado, se decide afuera)
+    variation_prices: opcional, dict {variation_id: precio}. Si se omite y el item
+                     tiene variantes, aplica `nuevo_precio` uniformemente a todas.
+
+    Importante (MLChile):
+    - Si el item tiene `variations`, NO se puede mandar `{"price": X}` a nivel
+      parent — devuelve 400. Hay que mandar `{"variations": [{"id": vid,
+      "price": X}, ...]}` con TODAS las variantes activas.
+    - Si el item no tiene variantes, se manda `{"price": X}` simple.
+    - El precio debe ser número entero CLP (sin decimales en mercado chileno).
     """
     current = await client.get(f"/items/{item_id}")
     precio_actual = current.get("price")
-    if not precio_actual:
+    variations = current.get("variations") or []
+    if not precio_actual and not variations:
         return {"applied": False, "error": f"Item {item_id} sin precio actual"}
-    change_pct = abs(nuevo_precio - precio_actual) / precio_actual * 100
+
+    # Si tiene variantes, el precio "actual" para el delta es el de la primera variante
+    ref_precio = (
+        precio_actual
+        if precio_actual
+        else (variations[0].get("price") if variations else 0)
+    )
+    change_pct = abs(nuevo_precio - ref_precio) / ref_precio * 100 if ref_precio else 0
     diff = {
         "item_id": item_id,
-        "precio_antes": precio_actual,
+        "precio_antes": ref_precio,
         "precio_despues": nuevo_precio,
-        "delta_clp": nuevo_precio - precio_actual,
+        "delta_clp": nuevo_precio - ref_precio,
         "delta_pct": round(change_pct, 2),
         "motivo": motivo,
+        "tiene_variations": len(variations) > 0,
+        "num_variations": len(variations),
     }
     if change_pct > max_change_pct and dry_run:
         _audit("actualizar_precio.guardrail", item_id, diff, applied=False)
@@ -124,15 +143,56 @@ async def actualizar_precio(
                 f"Pasa dry_run=False y max_change_pct={change_pct+1} para forzar."
             ),
         }
+
+    # Construir el payload según si el item tiene variantes o no
+    nuevo_precio_int = int(round(nuevo_precio))  # ML Chile usa CLP entero
+    if variations:
+        # Permitir override per-variation si vino especificado, sino aplicar uniforme
+        per_v = variation_prices or {}
+        payload = {
+            "variations": [
+                {
+                    "id": v["id"],
+                    "price": int(round(per_v.get(v["id"], nuevo_precio_int))),
+                }
+                for v in variations
+            ]
+        }
+    else:
+        payload = {"price": nuevo_precio_int}
+
     if dry_run:
+        diff["payload_a_enviar"] = payload
         _audit("actualizar_precio.dry_run", item_id, diff, applied=False)
-        return {"applied": False, "would_apply": True, "diff": diff}
-    result = await client.put(
-        f"/items/{item_id}",
-        json={"price": nuevo_precio},
-    )
-    _audit("actualizar_precio", item_id, diff, applied=True)
-    return {"applied": True, "diff": diff, "result_id": result.get("id")}
+        return {"applied": False, "would_apply": True, "diff": diff, "payload": payload}
+
+    try:
+        result = await client.put(f"/items/{item_id}", json=payload)
+    except Exception as e:
+        err_str = str(e)[:400]
+        _audit(
+            "actualizar_precio.failed",
+            item_id,
+            {**diff, "payload": payload, "error": err_str},
+            applied=False,
+        )
+        return {
+            "applied": False,
+            "diff": diff,
+            "error": err_str,
+            "payload_intentado": payload,
+            "hint": (
+                "Si error 400 menciona 'variations', revisa que TODAS las variantes "
+                "activas estén incluidas en el payload."
+            ),
+        }
+    _audit("actualizar_precio", item_id, {**diff, "payload": payload}, applied=True)
+    return {
+        "applied": True,
+        "diff": diff,
+        "result_id": result.get("id") if isinstance(result, dict) else None,
+        "payload_used": payload,
+    }
 
 
 async def actualizar_stock(
@@ -140,27 +200,75 @@ async def actualizar_stock(
     item_id: str,
     nuevo_stock: int,
     dry_run: bool = False,
+    variation_stocks: Optional[dict[int, int]] = None,
 ) -> dict:
     """
     Sync de stock. Por design corre AUTOMÁTICO sin dry_run (sync con BSale).
+
+    variation_stocks: opcional, dict {variation_id: stock}. Si se omite y el item
+                     tiene variantes, aplica `nuevo_stock` uniformemente.
+
+    ML rechaza `{"available_quantity": X}` a nivel parent cuando el item tiene
+    variants — devuelve 400. Hay que usar `{"variations": [{"id": vid,
+    "available_quantity": X}, ...]}`.
     """
     current = await client.get(f"/items/{item_id}")
     stock_actual = current.get("available_quantity")
+    variations = current.get("variations") or []
     diff = {
         "item_id": item_id,
         "stock_antes": stock_actual,
         "stock_despues": nuevo_stock,
         "delta": nuevo_stock - (stock_actual or 0),
+        "tiene_variations": len(variations) > 0,
+        "num_variations": len(variations),
     }
+
+    nuevo_stock_int = int(nuevo_stock)
+    if variations:
+        per_v = variation_stocks or {}
+        payload = {
+            "variations": [
+                {
+                    "id": v["id"],
+                    "available_quantity": int(
+                        per_v.get(v["id"], nuevo_stock_int)
+                    ),
+                }
+                for v in variations
+            ]
+        }
+    else:
+        payload = {"available_quantity": nuevo_stock_int}
+
     if dry_run:
+        diff["payload_a_enviar"] = payload
         _audit("actualizar_stock.dry_run", item_id, diff, applied=False)
-        return {"applied": False, "would_apply": True, "diff": diff}
-    result = await client.put(
-        f"/items/{item_id}",
-        json={"available_quantity": nuevo_stock},
-    )
-    _audit("actualizar_stock", item_id, diff, applied=True)
-    return {"applied": True, "diff": diff, "result_id": result.get("id")}
+        return {"applied": False, "would_apply": True, "diff": diff, "payload": payload}
+
+    try:
+        result = await client.put(f"/items/{item_id}", json=payload)
+    except Exception as e:
+        err_str = str(e)[:400]
+        _audit(
+            "actualizar_stock.failed",
+            item_id,
+            {**diff, "payload": payload, "error": err_str},
+            applied=False,
+        )
+        return {
+            "applied": False,
+            "diff": diff,
+            "error": err_str,
+            "payload_intentado": payload,
+        }
+    _audit("actualizar_stock", item_id, {**diff, "payload": payload}, applied=True)
+    return {
+        "applied": True,
+        "diff": diff,
+        "result_id": result.get("id") if isinstance(result, dict) else None,
+        "payload_used": payload,
+    }
 
 
 async def actualizar_titulo_descripcion(
