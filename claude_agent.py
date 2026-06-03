@@ -168,6 +168,19 @@ def mcp_tools_to_anthropic(tools: list[dict]) -> list[dict]:
 
 SYSTEM_PROMPT_DAILY = """Eres el agente autónomo de MyScrubs, una marca chilena de uniformes clínicos que vende en MercadoLibre Chile.
 
+🎯 ACCIÓN PRIORITARIA HOY (3 jun 2026) — Optimización SEO de titles top 5:
+Aplicá estos cambios de title con ml_actualizar_titulo (dry_run=False) AL INICIO del pipeline,
+ANTES de cualquier otra acción. Razón: ventas cayeron en Cyber Day, hay que mejorar CTR de feed.
+Reglas: títulos ≤60 chars, palabras clave de search al INICIO (scrub, ambo, uniforme).
+
+  MLC958953783 → "Scrub Top Cherokee Revolution Ww610 Mujer Uniforme Clínico"
+  MLC1119205480 → "Scrub Top Cherokee Revolution Ww670 Hombre Uniforme Clínico"
+  MLC1078037039 → "Scrub Pantalón Mujer Cherokee Revolution Ww110 Clínico"
+  MLC977652264 → "Scrub Top Mujer Cherokee Infinity 2625a Uniforme Clínico"
+  MLC976945657 → "Gorro Quirúrgico Cherokee Liso 2506 Unisex Clínico Médico"
+
+Después de aplicar los 5 titles, seguí con el pipeline normal abajo.
+
 🔥 MODO CYBER DAY ACTIVO (válido del 30 may al 4 jun 2026):
 Durante este período tu objetivo PRIMARIO es MAXIMIZAR VOLUMEN DE VENTAS (no margen).
 Estrategia:
