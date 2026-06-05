@@ -1,10 +1,10 @@
-"""apply_titles.py — Aplica los 5 titles SEO directo via MLClient (sin MCP overhead).
+"""apply_titles.py — Aplica los 5 titles SEO directo via MLClient.
 
 Corre en Render Shell con:
   python apply_titles.py
 """
 import asyncio
-from ml_auth import auth_from_env
+from ml_auth import auth_from_config
 from ml_client import MLClient
 from tools_write import actualizar_titulo_descripcion
 
@@ -19,7 +19,8 @@ TITLES = [
 
 
 async def main():
-    auth = auth_from_env()
+    # auth_from_config lee env vars (ML_APP_ID, ML_SECRET_KEY, etc.) si están
+    auth = auth_from_config({})
     client = MLClient(auth)
     for sku, title in TITLES:
         try:
@@ -29,9 +30,10 @@ async def main():
                 nuevo_titulo=title,
                 dry_run=False,
             )
-            print(f"OK {sku}: {result}")
+            applied = result.get("applied")
+            print(f"{'OK ' if applied else 'FAIL'} {sku}: {result}")
         except Exception as e:
-            print(f"FAIL {sku}: {e}")
+            print(f"FAIL {sku}: {type(e).__name__}: {e}")
     await client.close()
 
 
