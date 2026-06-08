@@ -45,9 +45,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if any(path.startswith(p) for p in self.PROTECTED_PREFIXES):
             auth = request.headers.get("authorization", "")
-            if not auth.startswith("Bearer "):
-                return JSONResponse({"error": "missing_bearer"}, status_code=401)
-            token = auth.split(" ", 1)[1].strip()
+            token = auth.split(" ", 1)[1].strip() if auth.startswith("Bearer ") else ""
+            if not token:
+                token = request.query_params.get("token", "")
             if token != MCP_AUTH_TOKEN:
                 return JSONResponse({"error": "invalid_token"}, status_code=401)
         return await call_next(request)
@@ -163,7 +163,6 @@ def build_app() -> Starlette:
 
 
 app = build_app()
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
