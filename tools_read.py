@@ -185,11 +185,55 @@ async def estadisticas_categoria(
 # 2. MIS PUBLICACIONES
 # =========================================================================
 
+CAMPOS_ITEM_BASE = (
+    "id", "title", "price", "base_price", "currency_id", "status",
+    "sub_status", "listing_type_id", "available_quantity",
+    "initial_quantity", "sold_quantity", "health", "permalink",
+    "category_id", "seller_custom_field", "catalog_listing",
+    "date_created", "last_updated",
+)
+
+CAMPOS_VARIACION = (
+    "id", "price", "available_quantity", "sold_quantity",
+    "seller_custom_field", "user_product_id",
+)
+
+
+def _podar_item(body: dict) -> dict:
+    """
+    Deja solo los campos que el agente y los informes usan.
+
+    El item completo de la API de ML pesa ~41 KB (pictures, descriptions,
+    attributes, sale_terms, seller_address, coverage_areas y los
+    picture_ids de cada variacion). Podado queda en ~1-2 KB.
+    Para el payload completo, pasar full=True.
+    """
+    out = {k: body.get(k) for k in CAMPOS_ITEM_BASE if k in body}
+    shipping = body.get("shipping") or {}
+    out["shipping"] = {
+        "free_shipping": shipping.get("free_shipping"),
+        "mode": shipping.get("mode"),
+        "logistic_type": shipping.get("logistic_type"),
+    }
+    variaciones = []
+    for v in body.get("variations") or []:
+        vv = {k: v.get(k) for k in CAMPOS_VARIACION if k in v}
+        vv["attribute_combinations"] = [
+            {"name": c.get("name"), "value_name": c.get("value_name")}
+            for c in (v.get("attribute_combinations") or [])
+        ]
+        variaciones.append(vv)
+    if variaciones:
+        out["variations"] = variaciones
+    return out
+
+
 async def mis_publicaciones(
     client: MLClient,
     user_id: int,
     status: str = "active",
     limit: int = 100,
+    full: bool = False,
 ) -> list[dict]:
     """
     Lista mis publicaciones (active | paused | closed | under_review).
@@ -223,7 +267,8 @@ async def mis_publicaciones(
         )
         for entry in bulk:
             if entry.get("code") == 200:
-                items_detail.append(entry["body"])
+                body = entry["body"]
+                items_detail.append(body if full else _podar_item(body))
     return items_detail
 
 
