@@ -192,10 +192,16 @@ async def ml_estadisticas_categoria(query: str) -> dict:
 
 @mcp.tool()
 async def ml_mis_publicaciones(
-    status: str = "active", limit: int = 100
+    status: str = "active", limit: int = 100, full: bool = False
 ) -> list[dict]:
-    """Lista mis publicaciones con detalle completo."""
-    return await TR.mis_publicaciones(client, USER_ID, status, limit)
+    """Lista mis publicaciones con los campos utiles (id, titulo, precio,
+    health, stock, vendidos, variantes con talla/color y su stock).
+
+    full=True devuelve el item completo de la API de ML (~41 KB por
+    publicacion: fotos, descripciones, atributos). Usarlo solo cuando se
+    necesite un campo que la version podada no trae.
+    """
+    return await TR.mis_publicaciones(client, USER_ID, status, limit, full)
 
 
 @mcp.tool()

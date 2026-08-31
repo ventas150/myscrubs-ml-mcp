@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -41,7 +42,9 @@ from profit_engine import (
 
 log = structlog.get_logger("agente_diario")
 
-REPORT_DIR = Path.home() / ".myscrubs_ml" / "reports"
+REPORT_DIR = Path(
+    os.environ.get("MYSCRUBS_DATA_DIR", str(Path.home() / ".myscrubs_ml"))
+) / "reports"
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -92,7 +95,7 @@ async def correr_agente(
     # ----- Paso 2: snapshot propio -----
     log.info("step.own_snapshot")
     mis_items = await TR.mis_publicaciones(
-        client, user_id, status="active", limit=200
+        client, user_id, status="active", limit=100
     )
     report["passos"]["own_snapshot"] = {"items_activos": len(mis_items)}
 

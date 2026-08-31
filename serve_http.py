@@ -137,7 +137,18 @@ async def oauth_status(request):
 
 
 def build_app() -> Starlette:
-    mcp_asgi = srv_module.mcp.http_app(path="/")
+    # stateless_http=True: cada request se atiende con una instancia
+    # efimera. En modo stateful el session manager de StreamableHTTP
+    # guarda una sesion por cada initialize y no la libera nunca: la
+    # memoria sube en escalones hasta que Render mata el proceso por OOM
+    # (paso el 31-ago-2026 tras 84 dias corriendo, con 512 MB de limite).
+    try:
+        mcp_asgi = srv_module.mcp.http_app(path="/", stateless_http=True)
+    except TypeError:
+        # Version de fastmcp que no soporta el parametro: no rompemos el
+        # arranque, pero dejamos constancia de que el leak sigue vivo.
+        log.warning("stateless_http_no_soportado_por_esta_version_de_fastmcp")
+        mcp_asgi = srv_module.mcp.http_app(path="/")
 
     @asynccontextmanager
     async def _combined_lifespan(app):
