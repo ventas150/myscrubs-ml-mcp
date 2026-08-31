@@ -71,9 +71,23 @@ class BSaleBridge:
             return
         try:
             data = json.loads(self.cache_path.read_text())
+            descartadas = 0
+            ahora = time.time()
             for sku, payload in data.items():
-                self._cache[sku] = SkuCost(**payload)
-            log.info("bsale_cache_loaded", count=len(self._cache))
+                cost = SkuCost(**payload)
+                # Entradas envenenadas: costo 0 (nunca sirve para decidir
+                # precio) o timestamp futuro (con last_updated adelantado,
+                # _is_fresh da siempre True y el costo 0 queda pegado para
+                # siempre). Se descartan al cargar.
+                if cost.costo_neto_clp <= 0 or cost.last_updated > ahora + 60:
+                    descartadas += 1
+                    continue
+                self._cache[sku] = cost
+            log.info(
+                "bsale_cache_loaded",
+                count=len(self._cache),
+                descartadas=descartadas,
+            )
         except Exception as e:
             log.warning("bsale_cache_load_failed", error=str(e))
 
@@ -82,16 +96,31 @@ class BSaleBridge:
         self.cache_path.write_text(json.dumps(payload, indent=2))
 
     def _is_fresh(self, cost: SkuCost) -> bool:
-        return (time.time() - cost.last_updated) < self.cache_ttl
+        edad = time.time() - cost.last_updated
+        # Una edad negativa = timestamp futuro = entrada corrupta, no fresca.
+        return 0 <= edad < self.cache_ttl
 
     # ---------- API pública ----------
 
     async def get_cost_by_sku(self, sku: str) -> Optional[SkuCost]:
+        """
+        Devuelve el costo del SKU, o None si BSale no lo tiene.
+
+        Un costo 0 se trata como NO ENCONTRADO: es lo que pasa cuando el
+        SKU que se consulta no existe en BSale (p. ej. cuando se le pasa
+        el item_id de ML porque la publicación no tiene
+        seller_custom_field). Devolverlo como costo válido infla el margen
+        al ~73% y hace que el agente proponga bajar todos los precios.
+        """
         cached = self._cache.get(sku)
         if cached and self._is_fresh(cached):
             return cached
 
         fresh = await self._fetch_one(sku)
+        if fresh and fresh.costo_neto_clp <= 0:
+            log.warning("bsale_costo_cero_descartado", sku=sku)
+            self._cache.pop(sku, None)
+            return None
         if fresh:
             self._cache[sku] = fresh
             self._save_cache()
