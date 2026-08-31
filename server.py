@@ -335,11 +335,15 @@ async def ml_precio_minimo_objetivo(
 
 @mcp.tool()
 async def ml_decision_precio(
-    sku: str, pvp_actual: float, posicion_ranking: int
+    sku: str, pvp_actual: float, posicion_ranking: Optional[int] = None
 ) -> dict:
     """
     Heurística: dado un SKU, su precio actual y su posición en el ranking,
     devuelve qué hacer (mantener / subir / bajar / pausar).
+
+    posicion_ranking=None (default) significa POSICIÓN DESCONOCIDA: no se
+    propone ningún cambio apoyado en la competencia. No inventar un número
+    para "rellenar" este campo.
     """
     margen = await _calcular_margen_sku_helper(sku, pvp_actual)
     if "error" in margen:

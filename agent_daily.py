@@ -25,7 +25,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import structlog
 
@@ -87,10 +87,22 @@ async def correr_agente(
             report["alertas"].append(
                 f"Snapshot mercado '{term}' falló: {e}"
             )
+    total_observados = sum(len(v) for v in market.values())
     report["passos"]["market_snapshot"] = {
         "search_terms": len(market),
-        "total_items_observados": sum(len(v) for v in market.values()),
+        "total_items_observados": total_observados,
     }
+    # Sin datos de mercado no hay posición de ranking y, por lo tanto,
+    # ninguna decisión de precio puede apoyarse en la competencia.
+    mercado_ciego = total_observados == 0
+    if mercado_ciego:
+        report["alertas"].insert(
+            0,
+            "SIN DATOS DE MERCADO: ningún snapshot devolvió resultados "
+            "(/sites/{site}/search viene devolviendo HTTP 403). La posición "
+            "en el ranking queda DESCONOCIDA y no se propone ningún cambio "
+            "de precio por competencia.",
+        )
 
     # ----- Paso 2: snapshot propio -----
     log.info("step.own_snapshot")
@@ -101,15 +113,25 @@ async def correr_agente(
 
     # ----- Paso 3: snapshot financiero -----
     log.info("step.profit_snapshot")
-    # Recolecta SKUs de mis items
-    skus = list({(it.get("seller_custom_field") or it.get("id")) for it in mis_items})
-    costs_map = await bsale.bulk_costs([s for s in skus if s])
+    # Recolecta SKUs de mis items. OJO: solo seller_custom_field es un SKU
+    # de BSale. Antes se caía al item_id de ML ("MLC958953783"), que BSale
+    # no conoce: devolvía costo 0 y el margen salía inflado ~73%.
+    skus = list({
+        it.get("seller_custom_field") for it in mis_items
+        if it.get("seller_custom_field")
+    })
+    costs_map = await bsale.bulk_costs(skus) if skus else {}
     margenes: dict[str, dict] = {}
     margen_total_estimado = 0.0
     items_sin_costo: list[str] = []
+    items_sin_sku: list[str] = []
     for it in mis_items:
         item_id = it["id"]
-        sku = it.get("seller_custom_field") or item_id
+        sku = it.get("seller_custom_field")
+        if not sku:
+            items_sin_sku.append(item_id)
+            items_sin_costo.append(item_id)
+            continue
         cost = costs_map.get(sku)
         if not cost:
             items_sin_costo.append(item_id)
@@ -144,8 +166,17 @@ async def correr_agente(
     report["passos"]["profit_snapshot"] = {
         "items_con_margen": len(margenes),
         "items_sin_costo_bsale": len(items_sin_costo),
+        "items_sin_sku_bsale": len(items_sin_sku),
         "margen_acumulado_estimado_lifetime_clp": round(margen_total_estimado),
     }
+    if items_sin_sku:
+        report["alertas"].append(
+            f"{len(items_sin_sku)} publicaciones SIN seller_custom_field: no "
+            "hay forma de saber su costo en BSale, así que quedan fuera de "
+            "todo cálculo de margen y de toda decisión de precio. Para "
+            "arreglarlo hay que cargar el SKU de BSale en cada publicación "
+            "de ML."
+        )
     if items_sin_costo:
         report["alertas"].append(
             f"{len(items_sin_costo)} items sin costo en BSale (mapping faltante)"
@@ -339,16 +370,26 @@ async def correr_agente(
 # Helpers privados
 # =========================================================================
 
-def _estimar_posicion(my_item: dict, market: dict[str, list[dict]]) -> int:
+def _estimar_posicion(
+    my_item: dict, market: dict[str, list[dict]]
+) -> Optional[int]:
     """
     Proxy de posición de ranking: cuenta cuántos items competidores tienen
     precio MENOR al mío para cada term donde el título de mi item matchea
-    palabras claves. Si nunca aparece, devuelve 99.
+    palabras claves.
+
+    Devuelve None cuando NO hay dato (el snapshot de mercado falló o el
+    título no matchea ningún término). Antes devolvía 99, que la heurística
+    de precio leía como "estoy último en el ranking" y disparaba
+    BAJAR_PRECIO en todo el catálogo — el mecanismo del incidente del
+    7 al 12 de agosto de 2026. Desconocido NO es lo mismo que último.
     """
     title = (my_item.get("title") or "").lower()
     pvp = float(my_item.get("price", 0))
-    min_rank = 99
+    min_rank: Optional[int] = None
     for term, items in market.items():
+        if not items:
+            continue
         if not any(w in title for w in term.lower().split()):
             continue
         cheaper = sum(
@@ -356,7 +397,7 @@ def _estimar_posicion(my_item: dict, market: dict[str, list[dict]]) -> int:
             if float(it.get("price", 0)) < pvp and it.get("id") != my_item["id"]
         )
         rank = cheaper + 1
-        if rank < min_rank:
+        if min_rank is None or rank < min_rank:
             min_rank = rank
     return min_rank
 

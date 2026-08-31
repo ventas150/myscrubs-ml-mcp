@@ -66,6 +66,10 @@ class ProfitBreakdown:
     margen_pct: float
     is_profitable: bool
     notes: list[str] = field(default_factory=list)
+    # False cuando el costo no vino de BSale (0 o negativo). Un costo 0
+    # infla el margen al ~73% y hace que el agente proponga bajar precio.
+    # Ver el incidente del 7-12 de agosto de 2026.
+    costo_confiable: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -81,6 +85,7 @@ class ProfitBreakdown:
             "margen_neto_clp": round(self.margen_neto_clp),
             "margen_pct": round(self.margen_pct, 2),
             "is_profitable": self.is_profitable,
+            "costo_confiable": self.costo_confiable,
             "notes": self.notes,
         }
 
@@ -93,6 +98,13 @@ def calcular_margen(inp: ProfitInputs) -> ProfitBreakdown:
         raise ValueError(f"PVP inválido para {inp.sku}: {inp.pvp_clp}")
     if inp.costo_neto_clp < 0:
         raise ValueError(f"Costo inválido para {inp.sku}: {inp.costo_neto_clp}")
+
+    costo_confiable = inp.costo_neto_clp > 0
+    if not costo_confiable:
+        notes.append(
+            "COSTO 0: no vino de BSale. El margen de abajo NO sirve para "
+            "decidir precio."
+        )
 
     # 1) Quitar IVA
     pvp_neto = inp.pvp_clp / (1 + inp.iva_pct / 100)
@@ -145,6 +157,7 @@ def calcular_margen(inp: ProfitInputs) -> ProfitBreakdown:
         margen_pct=margen_pct,
         is_profitable=margen_neto > 0,
         notes=notes,
+        costo_confiable=costo_confiable,
     )
 
 
@@ -213,15 +226,30 @@ def precio_minimo_para_margen(
 
 def evaluar_decision_precio(
     breakdown: ProfitBreakdown,
-    posicion_ranking: int,
+    posicion_ranking: Optional[int],
     margen_minimo_pct: float = 20,
     margen_ideal_pct: float = 30,
 ) -> dict:
     """
     Heurística que el agente usa para decidir qué hacer con el precio.
 
-    Returns dict con: decision, accion_sugerida, razon, nuevo_precio_sugerido
+    posicion_ranking = None significa POSICIÓN DESCONOCIDA (el snapshot de
+    mercado falló). En ese caso no se decide nada por posición: antes el
+    default era 99, que la heurística leía como "voy último" y disparaba
+    BAJAR_PRECIO en todo el catálogo.
+
+    Returns dict con: decision, razon, nuevo_precio_sugerido
     """
+    if not breakdown.costo_confiable:
+        return {
+            "decision": "SIN_DATOS_COSTO",
+            "razon": (
+                f"Sin costo de BSale para {breakdown.sku} (llegó 0). "
+                "No se puede evaluar el precio: el margen calculado es "
+                "ficticio. Mapear el SKU antes de decidir nada."
+            ),
+            "nuevo_precio_sugerido": None,
+        }
     if not breakdown.is_profitable:
         return {
             "decision": "PAUSAR_O_SUBIR",
@@ -239,6 +267,17 @@ def evaluar_decision_precio(
                 f"{margen_minimo_pct}%."
             ),
             "nuevo_precio_sugerido": None,  # calcular afuera con precio_minimo_para_margen
+        }
+    if posicion_ranking is None:
+        return {
+            "decision": "MANTENER",
+            "razon": (
+                f"Margen {breakdown.margen_pct:.1f}% sobre el mínimo, pero "
+                "la posición en el ranking es DESCONOCIDA (el snapshot de "
+                "mercado falló). Sin dato de competencia no se toca el "
+                "precio."
+            ),
+            "nuevo_precio_sugerido": None,
         }
     if (
         breakdown.margen_pct >= margen_ideal_pct
