@@ -388,3 +388,31 @@ async def calculadora_envio(
         f"/items/{item_id}/shipping_options",
         params={"zip_code": zip_code_destino},
     )
+
+
+async def sku_estado(client: MLClient, item_id: str) -> dict:
+    """Muestra el seller_custom_field actual de una publicacion y de cada variacion.
+
+    Sirve para saber que falta mapear antes de escribir nada.
+    """
+    it = await client.get(f"/items/{item_id}")
+    vars_ = []
+    for v in (it.get("variations") or []):
+        at = v.get("attribute_combinations") or []
+        vars_.append(
+            {
+                "variation_id": str(v.get("id")),
+                "combinacion": " / ".join(str(a.get("value_name")) for a in at),
+                "sku": v.get("seller_custom_field"),
+                "stock": v.get("available_quantity"),
+            }
+        )
+    sin_sku = [v for v in vars_ if not v["sku"]]
+    return {
+        "item_id": item_id,
+        "titulo": it.get("title"),
+        "sku_item": it.get("seller_custom_field"),
+        "total_variaciones": len(vars_),
+        "variaciones_sin_sku": len(sin_sku),
+        "variaciones": vars_,
+    }

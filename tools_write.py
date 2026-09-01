@@ -422,6 +422,104 @@ async def aplicar_promocion_seller(
 
 
 # =========================================================================
+
+
+async def actualizar_sku(
+    client: MLClient,
+    item_id: str,
+    sku: Optional[str] = None,
+    skus_variaciones: Optional[dict] = None,
+    dry_run: bool = True,
+) -> dict:
+    """Escribe seller_custom_field (el SKU de Bsale) en la publicacion y/o en sus variaciones.
+
+    Es el campo que usa bsale_bridge para buscar el costo. Sin el, el margen no
+    se puede calcular y el motor devuelve SIN_DATOS_COSTO.
+
+    Args:
+      sku: SKU a nivel de publicacion.
+      skus_variaciones: {variation_id: sku} para las variaciones.
+
+    NO toca precio ni stock: el payload solo lleva seller_custom_field.
+    """
+    actual = await client.get(f"/items/{item_id}")
+    vars_actuales = {str(v.get("id")): v for v in (actual.get("variations") or [])}
+
+    diff: dict[str, Any] = {"item_id": item_id, "cambios": []}
+    payload: dict[str, Any] = {}
+
+    if sku is not None:
+        antes = actual.get("seller_custom_field")
+        if antes != sku:
+            payload["seller_custom_field"] = sku
+            diff["cambios"].append(
+                {"nivel": "item", "antes": antes, "despues": sku}
+            )
+
+    if skus_variaciones:
+        vs = []
+        for vid, nuevo in skus_variaciones.items():
+            vid = str(vid)
+            if vid not in vars_actuales:
+                raise ValueError(
+                    f"La variacion {vid} no existe en {item_id}. "
+                    f"Variaciones validas: {sorted(vars_actuales)[:10]}..."
+                )
+            antes = vars_actuales[vid].get("seller_custom_field")
+            if antes == nuevo:
+                continue
+            vs.append({"id": int(vid), "seller_custom_field": nuevo})
+            at = vars_actuales[vid].get("attribute_combinations") or []
+            etiqueta = " / ".join(str(a.get("value_name")) for a in at)
+            diff["cambios"].append(
+                {
+                    "nivel": "variacion",
+                    "variation_id": vid,
+                    "combinacion": etiqueta,
+                    "antes": antes,
+                    "despues": nuevo,
+                }
+            )
+        if vs:
+            payload["variations"] = vs
+
+    # candado: nada fuera de seller_custom_field puede viajar en el payload
+    for k, v in payload.items():
+        if k == "variations":
+            for vv in v:
+                extra = set(vv) - {"id", "seller_custom_field"}
+                if extra:
+                    raise ValueError(f"Payload de variacion con campos no permitidos: {extra}")
+        elif k != "seller_custom_field":
+            raise ValueError(f"Payload con campo no permitido: {k}")
+
+    if not payload:
+        _audit("actualizar_sku.sin_cambios", item_id, diff, applied=False)
+        return {"applied": False, "sin_cambios": True, "diff": diff}
+
+    if dry_run:
+        _audit("actualizar_sku.dry_run", item_id, diff, applied=False)
+        return {
+            "applied": False,
+            "would_apply": True,
+            "diff": diff,
+            "next_step": "Llamar de nuevo con dry_run=False para escribir.",
+        }
+
+    await client.put(f"/items/{item_id}", json=payload)
+
+    verif = await client.get(f"/items/{item_id}")
+    vv = {str(x.get("id")): x.get("seller_custom_field") for x in (verif.get("variations") or [])}
+    ok = True
+    if "seller_custom_field" in payload:
+        ok = ok and verif.get("seller_custom_field") == payload["seller_custom_field"]
+    for x in payload.get("variations", []):
+        ok = ok and vv.get(str(x["id"])) == x["seller_custom_field"]
+
+    _audit("actualizar_sku", item_id, {**diff, "verificado": ok}, applied=True)
+    return {"applied": True, "verificado": ok, "diff": diff}
+
+
 # Resumen del audit log (útil para que el agente vea qué hizo hoy)
 # =========================================================================
 
