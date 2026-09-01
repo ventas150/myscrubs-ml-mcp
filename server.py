@@ -507,6 +507,26 @@ async def ml_cambios_precio_periodo(days_back: int = 7) -> dict:
     return TW.cambios_precio_periodo(days_back=days_back)
 
 
+@mcp.tool()
+async def ml_sku_estado(item_id: str) -> dict:
+    """Lee el SKU de Bsale (seller_custom_field) de una publicacion y sus variaciones."""
+    return await TR.sku_estado(client, item_id)
+
+
+@mcp.tool()
+async def ml_actualizar_sku(
+    item_id: str,
+    sku: Optional[str] = None,
+    skus_variaciones: Optional[dict] = None,
+    dry_run: bool = True,
+) -> dict:
+    """Escribe el SKU de Bsale (seller_custom_field) en la publicacion y/o sus variaciones.
+
+    No toca precio ni stock. dry_run=True por default: devuelve el diff sin escribir.
+    """
+    return await TW.actualizar_sku(client, item_id, sku, skus_variaciones, dry_run)
+
+
 # =========================================================================
 # Run
 # =========================================================================
@@ -533,23 +553,3 @@ if __name__ == "__main__":
             port=port,
             path="/mcp",
         )
-
-
-@mcp.tool()
-async def ml_sku_estado(item_id: str) -> dict:
-    """Lee el SKU de Bsale (seller_custom_field) de una publicacion y sus variaciones."""
-    return await TR.sku_estado(client, item_id)
-
-
-@mcp.tool()
-async def ml_actualizar_sku(
-    item_id: str,
-    sku: Optional[str] = None,
-    skus_variaciones: Optional[dict] = None,
-    dry_run: bool = True,
-) -> dict:
-    """Escribe el SKU de Bsale (seller_custom_field) en la publicacion y/o sus variaciones.
-
-    No toca precio ni stock. dry_run=True por default: devuelve el diff sin escribir.
-    """
-    return await TW.actualizar_sku(client, item_id, sku, skus_variaciones, dry_run)
